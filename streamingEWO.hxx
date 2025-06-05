@@ -22,6 +22,9 @@ class MyWidget : public QWidget
     bool getDebugMode() const;
     void setDebugPrint(bool enabled);
     bool getDebugPrint() const;
+    void setTransport(const QString& transport);
+    void setUdpHost(const QString& host);
+    void setUdpPort(int port);
 
   protected:
     virtual void paintEvent(QPaintEvent *event);
@@ -42,7 +45,11 @@ class MyWidget : public QWidget
     qint64 m_lastFrameTimestamp;
     bool m_debugMode; // New member for debug state
     bool m_debugPrint;
+    bool m_overLatencyCutoff = false; // New member to track latency cutoff
     qint64 m_currentDelayMs; // New member to store current delay
+    QString m_transport = "websocket";
+    QString m_udpHost;
+    int m_udpPort = 0;
 };
 
 //--------------------------------------------------------------------------------

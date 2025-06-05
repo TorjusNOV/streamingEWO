@@ -96,6 +96,11 @@ void MyWidget::setRtspStreamUrl(const QString &url)
         message["type"] = "control";
         message["command"] = "set_stream";
         message["url"] = m_rtspStreamUrl;
+        message["transport"] = m_transport;
+        if (m_transport == "udp") {
+            message["udp_host"] = m_udpHost;
+            message["udp_port"] = m_udpPort;
+        }
         m_webSocket->sendTextMessage(QJsonDocument(message).toJson(QJsonDocument::Compact));
     }
 }
@@ -146,6 +151,11 @@ void MyWidget::onConnected()
         message["type"] = "control";
         message["command"] = "set_stream";
         message["url"] = m_rtspStreamUrl;
+        message["transport"] = m_transport;
+        if (m_transport == "udp") {
+            message["udp_host"] = m_udpHost;
+            message["udp_port"] = m_udpPort;
+        }
         m_webSocket->sendTextMessage(QJsonDocument(message).toJson(QJsonDocument::Compact));
     }
     update();
@@ -198,7 +208,8 @@ void MyWidget::onBinaryMessageReceived(const QByteArray &message)
         m_currentDelayMs = currentTime - timestamp; // Store current delay
         if (m_debugPrint) qDebug() << "[DEBUG] onBinaryMessageReceived called. Current time, received time and delay:" << currentTime <<", " << timestamp << ", " << m_currentDelayMs;
 
-        if (m_currentDelayMs > 150) {
+        bool overCutoff = m_currentDelayMs > 150;
+        if (!m_debugMode && overCutoff) {
             if (m_statusText != statusMsg.considerableLatency) {
                 m_statusText = statusMsg.considerableLatency;
                 m_image = QImage(); // Clear image
@@ -215,12 +226,15 @@ void MyWidget::onBinaryMessageReceived(const QByteArray &message)
                 }
             }
         }
+        // Store overCutoff for debug overlay
+        m_overLatencyCutoff = (m_debugMode && overCutoff);
     } else {
         if (m_statusText != statusMsg.invalidFormat) {
             m_statusText = statusMsg.invalidFormat;
             m_image = QImage(); // Clear image
         }
         m_currentDelayMs = -1; // Indicate invalid delay
+        m_overLatencyCutoff = false;
     }
     // Only update if something changed
     if (prevDelay != m_currentDelayMs || prevImage != m_image || prevStatus != m_statusText) {
@@ -338,6 +352,9 @@ void MyWidget::paintEvent(QPaintEvent *)
                               .arg(currentTimeStr)
                               .arg(serverIp)
                               .arg(m_rtspStreamUrl.isEmpty() ? "N/A" : m_rtspStreamUrl);
+      if (m_overLatencyCutoff) {
+          debugText.prepend("[!] Latency above cutoff!\n");
+      }
 
       painter.setFont(QFont("Roboto", 10)); // Slightly smaller font for debug
 
@@ -450,6 +467,9 @@ QStringList streamingEWO::methodList() const
   list.append("void setRtspStreamUrl(string url)");
   list.append("void setDebugMode(bool enabled)"); // Add new method
   list.append("void setDebugPrint(bool enabled)"); // Add new method
+  list.append("void setTransport(string transport)");
+  list.append("void setUdpHost(string host)");
+  list.append("void setUdpPort(int port)"); // Add UDP port method
 
   return list;
 }
@@ -496,6 +516,25 @@ bool streamingEWO::methodInterface(const QString &name, QVariant::Type &retVal,
   {
     retVal = QVariant::Invalid;  // we return void
     args.append(QVariant::Bool); // Argument is a boolean
+    return true;
+  }
+
+  if ( name == "setTransport" )
+  {
+    retVal = QVariant::Invalid;
+    args.append(QVariant::String);
+    return true;
+  }
+  if ( name == "setUdpHost" )
+  {
+    retVal = QVariant::Invalid;
+    args.append(QVariant::String);
+    return true;
+  }
+  if ( name == "setUdpPort" )
+  {
+    retVal = QVariant::Invalid;
+    args.append(QVariant::Int);
     return true;
   }
 
@@ -550,7 +589,48 @@ QVariant streamingEWO::invokeMethod(const QString &name, QList<QVariant> &values
     return QVariant();
   }
 
+  if ( name == "setTransport" )
+  {
+    if ( !hasNumArgs(name, values, 1, error) ) return QVariant();
+    baseWidget->setTransport(values[0].toString());
+    return QVariant();
+  }
+
+  if ( name == "setUdpHost" )
+  {
+    if ( !hasNumArgs(name, values, 1, error) ) return QVariant();
+    baseWidget->setUdpHost(values[0].toString());
+    return QVariant();
+  }
+
+  if ( name == "setUdpPort" )
+  {
+    if ( !hasNumArgs(name, values, 1, error) ) return QVariant();
+    baseWidget->setUdpPort(values[0].toInt());
+    return QVariant();
+  }
+
   return BaseExternWidget::invokeMethod(name, values, error);
+}
+
+// Implementation for setTransport, setUdpHost, setUdpPort
+void MyWidget::setTransport(const QString& transport) {
+    if (m_transport == transport)
+        return;
+    m_transport = transport;
+    if (m_debugPrint) qDebug() << "[DEBUG] setTransport called with" << transport;
+}
+void MyWidget::setUdpHost(const QString& host) {
+    if (m_udpHost == host)
+        return;
+    m_udpHost = host;
+    if (m_debugPrint) qDebug() << "[DEBUG] setUdpHost called with" << host;
+}
+void MyWidget::setUdpPort(int port) {
+    if (m_udpPort == port)
+        return;
+    m_udpPort = port;
+    if (m_debugPrint) qDebug() << "[DEBUG] setUdpPort called with" << port;
 }
 
 // Add two debug modes: debugPrint and debugMode
