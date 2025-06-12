@@ -5,6 +5,7 @@
 #include <QWebSocket>
 #include <QImage>
 #include <QTimer>
+#include <QUdpSocket>
 
 //--------------------------------------------------------------------------------
 // this is the real widget (an ordinary Qt widget), which can also use Q_PROPERTY
@@ -34,8 +35,12 @@ class MyWidget : public QWidget
     void onBinaryMessageReceived(const QByteArray &message);
     void onDisconnected();
     void checkConnectionStatus();
+    void onUdpDatagramReceived();
 
   private:
+    void setupUdpSocket();
+    void closeUdpSocket();
+
     QWebSocket *m_webSocket;
     QImage m_image;
     QString m_statusText;
@@ -48,8 +53,10 @@ class MyWidget : public QWidget
     bool m_overLatencyCutoff = false; // New member to track latency cutoff
     qint64 m_currentDelayMs; // New member to store current delay
     QString m_transport = "websocket";
-    QString m_udpHost;
-    int m_udpPort = 0;
+    int m_udpPort = 4635;
+
+    // Add member for UDP socket
+    QUdpSocket* m_udpSocket = nullptr;
 };
 
 //--------------------------------------------------------------------------------

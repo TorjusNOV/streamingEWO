@@ -97,8 +97,7 @@ void MyWidget::setRtspStreamUrl(const QString &url)
         message["command"] = "set_stream";
         message["url"] = m_rtspStreamUrl;
         message["transport"] = m_transport;
-        if (m_transport == "udp") {
-            message["udp_host"] = m_udpHost;
+        if (m_transport == "udp") {        
             message["udp_port"] = m_udpPort;
         }
         m_webSocket->sendTextMessage(QJsonDocument(message).toJson(QJsonDocument::Compact));
@@ -152,9 +151,9 @@ void MyWidget::onConnected()
         message["command"] = "set_stream";
         message["url"] = m_rtspStreamUrl;
         message["transport"] = m_transport;
-        if (m_transport == "udp") {
-            message["udp_host"] = m_udpHost;
+        if (m_transport == "udp") {        
             message["udp_port"] = m_udpPort;
+            setupUdpSocket();
         }
         m_webSocket->sendTextMessage(QJsonDocument(message).toJson(QJsonDocument::Compact));
     }
@@ -406,6 +405,65 @@ void MyWidget::paintEvent(QPaintEvent *)
   }
 }
 
+// Implementation for setTransport, setUdpPort
+void MyWidget::setTransport(const QString& transport) {
+    if (m_transport == transport)
+        return;
+    m_transport = transport;
+    if (m_debugPrint) qDebug() << "[DEBUG] setTransport called with" << transport;
+    if (m_transport == "udp") {
+        setupUdpSocket();
+    } else {
+        closeUdpSocket();
+    }
+}
+void MyWidget::setUdpPort(int port) {
+    if (m_udpPort == port)
+        return;
+    m_udpPort = port;
+    if (m_debugPrint) qDebug() << "[DEBUG] setUdpPort called with" << port;
+}
+
+void MyWidget::setupUdpSocket()
+{
+    closeUdpSocket();
+    if (m_udpPort <= 0)
+        return;
+    m_udpSocket = new QUdpSocket(this);
+    if (!m_udpSocket->bind(QHostAddress::Any, m_udpPort)) {
+        if (m_debugPrint) qDebug() << "[DEBUG] Failed to bind UDP socket on port" << m_udpPort;
+        delete m_udpSocket;
+        m_udpSocket = nullptr;
+        return;
+    }
+    connect(m_udpSocket, &QUdpSocket::readyRead, this, &MyWidget::onUdpDatagramReceived);
+    if (m_debugPrint) qDebug() << "[DEBUG] UDP socket bound on port" << m_udpPort;
+}
+
+void MyWidget::closeUdpSocket()
+{
+    if (m_udpSocket) {
+        m_udpSocket->close();
+        m_udpSocket->deleteLater();
+        m_udpSocket = nullptr;
+        if (m_debugPrint) qDebug() << "[DEBUG] UDP socket closed.";
+    }
+}
+
+void MyWidget::onUdpDatagramReceived()
+{
+    while (m_udpSocket && m_udpSocket->hasPendingDatagrams()) {
+        QByteArray datagram;
+        datagram.resize(int(m_udpSocket->pendingDatagramSize()));
+        QHostAddress sender;
+        quint16 senderPort;
+        m_udpSocket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+        if (m_debugPrint) qDebug() << "[DEBUG] UDP datagram received, size:" << datagram.size();
+        // Reuse the same logic as WebSocket binary message
+        onBinaryMessageReceived(datagram);
+    }
+}
+
 //--------------------------------------------------------------------------------
 // Here comes the implementation of the EWO interface class
 // The EWO interface class is just a wrapper around a normal Qt widget
@@ -468,7 +526,6 @@ QStringList streamingEWO::methodList() const
   list.append("void setDebugMode(bool enabled)"); // Add new method
   list.append("void setDebugPrint(bool enabled)"); // Add new method
   list.append("void setTransport(string transport)");
-  list.append("void setUdpHost(string host)");
   list.append("void setUdpPort(int port)"); // Add UDP port method
 
   return list;
@@ -520,12 +577,6 @@ bool streamingEWO::methodInterface(const QString &name, QVariant::Type &retVal,
   }
 
   if ( name == "setTransport" )
-  {
-    retVal = QVariant::Invalid;
-    args.append(QVariant::String);
-    return true;
-  }
-  if ( name == "setUdpHost" )
   {
     retVal = QVariant::Invalid;
     args.append(QVariant::String);
@@ -596,13 +647,6 @@ QVariant streamingEWO::invokeMethod(const QString &name, QList<QVariant> &values
     return QVariant();
   }
 
-  if ( name == "setUdpHost" )
-  {
-    if ( !hasNumArgs(name, values, 1, error) ) return QVariant();
-    baseWidget->setUdpHost(values[0].toString());
-    return QVariant();
-  }
-
   if ( name == "setUdpPort" )
   {
     if ( !hasNumArgs(name, values, 1, error) ) return QVariant();
@@ -613,25 +657,7 @@ QVariant streamingEWO::invokeMethod(const QString &name, QList<QVariant> &values
   return BaseExternWidget::invokeMethod(name, values, error);
 }
 
-// Implementation for setTransport, setUdpHost, setUdpPort
-void MyWidget::setTransport(const QString& transport) {
-    if (m_transport == transport)
-        return;
-    m_transport = transport;
-    if (m_debugPrint) qDebug() << "[DEBUG] setTransport called with" << transport;
-}
-void MyWidget::setUdpHost(const QString& host) {
-    if (m_udpHost == host)
-        return;
-    m_udpHost = host;
-    if (m_debugPrint) qDebug() << "[DEBUG] setUdpHost called with" << host;
-}
-void MyWidget::setUdpPort(int port) {
-    if (m_udpPort == port)
-        return;
-    m_udpPort = port;
-    if (m_debugPrint) qDebug() << "[DEBUG] setUdpPort called with" << port;
-}
+
 
 // Add two debug modes: debugPrint and debugMode
 Q_PROPERTY(bool debugMode READ getDebugMode WRITE setDebugMode DESIGNABLE true SCRIPTABLE true)
