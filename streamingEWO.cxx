@@ -42,7 +42,9 @@ MyWidget::MyWidget(QWidget *parent)
     m_lastFrameTimestamp(0),
     m_debugMode(false), // Initialize debug mode to false
     m_debugPrint(false), // Initialize debug print to false
-    m_currentDelayMs(0)  // Initialize current delay
+    m_currentDelayMs(0), // Initialize current delay
+    m_streamName(),
+    m_streamNameBoxPosition(TopLeft)
 {
   if (m_debugPrint) qDebug() << "[DEBUG] MyWidget constructor called";
   connect(m_webSocket, &QWebSocket::connected, this, &MyWidget::onConnected);
@@ -96,8 +98,8 @@ void MyWidget::setRtspStreamUrl(const QString &url)
         message["type"] = "control";
         message["command"] = "set_stream";
         message["url"] = m_rtspStreamUrl;
-        message["transport"] = m_transport;
-        if (m_transport == "udp") {        
+        message["transport"] = (m_transport == UDP ? "udp" : "websocket");
+        if (m_transport == UDP) {
             message["udp_port"] = m_udpPort;
         }
         m_webSocket->sendTextMessage(QJsonDocument(message).toJson(QJsonDocument::Compact));
@@ -150,8 +152,8 @@ void MyWidget::onConnected()
         message["type"] = "control";
         message["command"] = "set_stream";
         message["url"] = m_rtspStreamUrl;
-        message["transport"] = m_transport;
-        if (m_transport == "udp") {        
+        message["transport"] = (m_transport == UDP ? "udp" : "websocket");
+        if (m_transport == UDP) {
             message["udp_port"] = m_udpPort;
             setupUdpSocket();
         }
@@ -338,7 +340,7 @@ void MyWidget::paintEvent(QPaintEvent *)
       QString serverTimestampStr = (m_lastFrameTimestamp > 0)
           ? QDateTime::fromMSecsSinceEpoch(m_lastFrameTimestamp).toString("yyyy-MM-dd HH:mm:ss.zzz")
           : "N/A";
-      QString currentTimeStr = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz");
+      QString currentTimeStr = (m_inGedi ? "N/A" : QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz"));
       // Extract server IP from m_webSocketUrl
       QString serverIp = "N/A";
       QUrl wsUrl(m_webSocketUrl);
@@ -402,16 +404,56 @@ void MyWidget::paintEvent(QPaintEvent *)
       painter.setPen(Qt::white); // Text color for debug
       // Draw the text within the debugTextDrawRect, it will use this rect's width for wrapping.
       painter.drawText(debugTextDrawRect, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, debugText);
+  } else if (!m_streamName.isEmpty()) {
+      // Draw stream name box in selected corner
+      painter.setFont(QFont("Roboto", 10));
+      QFontMetrics fm = painter.fontMetrics();
+      int linePadding = 5;
+      int boxPadding = 5;
+      QString nameText = m_streamName;
+      QRect nameTextRect = fm.boundingRect(nameText);
+      int actualBoxWidth = nameTextRect.width() + 2 * linePadding;
+      int actualBoxHeight = nameTextRect.height() + 2 * linePadding;
+      int x = 0, y = 0;
+      switch (m_streamNameBoxPosition) {
+        case TopLeft:
+            x = boxPadding;
+            y = boxPadding;
+            break;
+        case TopRight:
+            x = width() - actualBoxWidth - boxPadding;
+            y = boxPadding;
+            break;
+        case BottomRight:
+            x = width() - actualBoxWidth - boxPadding;
+            y = height() - actualBoxHeight - boxPadding;
+            break;
+        case BottomLeft:
+            x = boxPadding;
+            y = height() - actualBoxHeight - boxPadding;
+            break;
+        default:
+            x = boxPadding;
+            y = boxPadding;
+      }
+      QRectF nameBoxRect(x, y, actualBoxWidth, actualBoxHeight);
+      QBrush nameBoxBrush(QColor(0, 0, 0, 128));
+      painter.setBrush(nameBoxBrush);
+      painter.setPen(Qt::NoPen);
+      painter.drawRoundedRect(nameBoxRect, 5, 5);
+      QRectF nameTextDrawRect = nameBoxRect.adjusted(linePadding, linePadding, -linePadding, -linePadding);
+      painter.setPen(Qt::white);
+      painter.drawText(nameTextDrawRect, Qt::AlignLeft | Qt::AlignVCenter, nameText);
   }
 }
 
 // Implementation for setTransport, setUdpPort
-void MyWidget::setTransport(const QString& transport) {
-    if (m_transport == transport)
+void MyWidget::setTransport(TransportProtocol protocol) {
+    if (m_transport == protocol)
         return;
-    m_transport = transport;
-    if (m_debugPrint) qDebug() << "[DEBUG] setTransport called with" << transport;
-    if (m_transport == "udp") {
+    m_transport = protocol;
+    if (m_debugPrint) qDebug() << "[DEBUG] setTransport called with" << (m_transport == UDP ? "UDP" : "WebSocket");
+    if (m_transport == UDP) {
         setupUdpSocket();
     } else {
         closeUdpSocket();
@@ -463,6 +505,36 @@ void MyWidget::onUdpDatagramReceived()
         onBinaryMessageReceived(datagram);
     }
 }
+
+void MyWidget::setStreamName(const QString &name, int position) {
+    m_streamName = name;
+    if (position >= 1 && position <= 4)
+        m_streamNameBoxPosition = static_cast<BoxPosition>(position);
+    else
+        m_streamNameBoxPosition = TopLeft;
+    if (m_debugPrint) qDebug() << "[DEBUG] setStreamName called with" << name << ", position:" << m_streamNameBoxPosition;
+    update();
+}
+void MyWidget::setStreamNameBoxPosition(BoxPosition pos) {
+    setStreamName(m_streamName, static_cast<int>(pos));
+ }
+
+ void MyWidget::setInGedi(bool inGedi)
+{
+    if (m_inGedi == inGedi)
+        return;
+    m_inGedi = inGedi;
+    update();
+}
+
+// Add getters for Q_PROPERTY
+QString MyWidget::getStreamName() const { return m_streamName; }
+MyWidget::BoxPosition MyWidget::getStreamNameBoxPosition() const { return m_streamNameBoxPosition; }
+QString MyWidget::getWebSocketUrl() const { return m_webSocketUrl; }
+QString MyWidget::getRtspStreamUrl() const { return m_rtspStreamUrl; }
+MyWidget::TransportProtocol MyWidget::getTransport() const { return m_transport; }
+int MyWidget::getUdpPort() const { return m_udpPort; }
+bool MyWidget::isInGedi() const { return m_inGedi; }
 
 //--------------------------------------------------------------------------------
 // Here comes the implementation of the EWO interface class
@@ -527,6 +599,7 @@ QStringList streamingEWO::methodList() const
   list.append("void setDebugPrint(bool enabled)"); // Add new method
   list.append("void setTransport(string transport)");
   list.append("void setUdpPort(int port)"); // Add UDP port method
+  list.append("void setStreamName(string name, int position=1)");
 
   return list;
 }
@@ -588,6 +661,13 @@ bool streamingEWO::methodInterface(const QString &name, QVariant::Type &retVal,
     args.append(QVariant::Int);
     return true;
   }
+  if ( name == "setStreamName" )
+  {
+    retVal = QVariant::Invalid;
+    args.append(QVariant::String);
+    args.append(QVariant::Int); // Optional, but always present in interface
+    return true;
+  }
 
   return false;
 }
@@ -643,7 +723,17 @@ QVariant streamingEWO::invokeMethod(const QString &name, QList<QVariant> &values
   if ( name == "setTransport" )
   {
     if ( !hasNumArgs(name, values, 1, error) ) return QVariant();
-    baseWidget->setTransport(values[0].toString());
+    QString protoStr = values[0].toString().trimmed().toLower();
+    MyWidget::TransportProtocol proto = MyWidget::WebSocket;
+    if (protoStr == "udp")
+      proto = MyWidget::UDP;
+    else if (protoStr == "websocket")
+      proto = MyWidget::WebSocket;
+    else {
+      error = QString("Invalid transport protocol: '%1'. Use 'udp' or 'websocket'.").arg(protoStr);
+      return QVariant();
+    }
+    baseWidget->setTransport(proto);
     return QVariant();
   }
 
@@ -654,13 +744,24 @@ QVariant streamingEWO::invokeMethod(const QString &name, QList<QVariant> &values
     return QVariant();
   }
 
+  if ( name == "setStreamName" )
+  {
+    if (values.size() == 1)
+      baseWidget->setStreamName(values[0].toString(), 1);
+    else if (values.size() >= 2)
+      baseWidget->setStreamName(values[0].toString(), values[1].toInt());
+    return QVariant();
+  }
+
   return BaseExternWidget::invokeMethod(name, values, error);
 }
 
 
 
-// Add two debug modes: debugPrint and debugMode
-Q_PROPERTY(bool debugMode READ getDebugMode WRITE setDebugMode DESIGNABLE true SCRIPTABLE true)
-Q_PROPERTY(bool debugPrint READ getDebugPrint WRITE setDebugPrint DESIGNABLE true SCRIPTABLE true)
+
+
+
+
+
 
 
