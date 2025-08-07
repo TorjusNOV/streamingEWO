@@ -18,7 +18,7 @@ Is used in conjunction with the [StreamServer](https://github.com/TorjusNOV/Stre
    - Only tested using VS 17 2022.
 2. **Integration**
    - In CMakeLists.txt, change which path the resulting widget executable should be placed, e.g. "C:/WinCC_OA_Proj/RTX/bin/widgets/windows-64" 
-   - Use the provided methods to set WebSocket and RTSP URLs, and toggle debug modes.
+   - Use the provided methods and/or properties in GEDI to set WebSocket and RTSP URLs, and toggle debug modes.
    - Make sure that the StreamServer manager (WCCOAstreamServer.exe) is running in OA's process monitor 
 
 ## Exposed Methods
