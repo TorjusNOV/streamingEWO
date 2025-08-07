@@ -1,6 +1,6 @@
 # streamingEWO
 
-A Qt-based custom widget for WinCC OA that displays RTSP video streams with status and debug overlays.
+A Qt-based custom widget for WinCC OA that displays video streams with status and debug overlays.
 Is used in conjunction with the [StreamServer](https://github.com/TorjusNOV/StreamServer) manager for OA.
 ## Features
 - Connects to a video stream via WebSocket and controls RTSP stream selection.
