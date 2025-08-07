@@ -43,7 +43,7 @@ public:
 
   public:
     MyWidget(QWidget *parent);
-
+    ~MyWidget();
     // Setters and getters for all Q_PROPERTYs
     void setWebSocketUrl(const QString &url);
     QString getWebSocketUrl() const;
@@ -57,7 +57,7 @@ public:
     TransportProtocol getTransport() const;
     void setUdpPort(int port);
     int getUdpPort() const;
-    void setStreamName(const QString &name, int position = 1);
+    void setStreamName(const QString &name, int position = -1);
     QString getStreamName() const;
     BoxPosition getStreamNameBoxPosition() const;
     void setStreamNameBoxPosition(BoxPosition pos);
@@ -66,6 +66,7 @@ public:
 
   protected:
     virtual void paintEvent(QPaintEvent *event);
+    virtual void mousePressEvent(QMouseEvent *event);
 
   private slots:
     void onConnected();
@@ -73,6 +74,7 @@ public:
     void onDisconnected();
     void checkConnectionStatus();
     void onUdpDatagramReceived();
+    void onTextMessageReceived(const QString &message);
 
   private:
     void setupUdpSocket();
@@ -92,10 +94,16 @@ public:
     TransportProtocol m_transport = WebSocket;
     int m_udpPort = 4635;
     QUdpSocket* m_udpSocket = nullptr;
+    QTimer* m_reconnectTimer = nullptr;
     // Stream name overlay members
     QString m_streamName;
     BoxPosition m_streamNameBoxPosition = TopLeft;
     bool m_inGedi = false;
+    // Undistortion members
+    bool m_undistortionAvailable = false;
+    bool m_undistortionEnabled = false;
+    int m_undistortionMode = 0; // 0=off, 1=alpha=1.0, 2=alpha=0.0
+    QRect m_undistortButtonRect;
 };
 
 //--------------------------------------------------------------------------------

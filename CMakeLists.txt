@@ -18,13 +18,18 @@ if ( WIN32 )
   set (SOURCES ${SOURCES} VersInfo.rc)
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets WebSockets)
+# Find required packages
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets WebSockets Svg)
+
+# As this is a Qt project, we need to enable automoc, autouic and autorcc
 qt_standard_project_setup()
+qt_add_resources(RESOURCES resources.qrc)
+qt_add_library(${TARGET} SHARED ${SOURCES} ${RESOURCES})
 
-# qt_add_executable(${TARGET} ${SOURCES})
-qt_add_library(${TARGET} SHARED ${SOURCES})
-target_link_libraries(${TARGET} PRIVATE Qt6::Widgets Qt6::WebSockets ewo)
+# Link libraries
+target_link_libraries(${TARGET} PRIVATE Qt6::Gui Qt6::Widgets Qt6::WebSockets Qt6::Svg ewo)
 
+# Install rules
 set(DEST_DIR "C:/WinCC_OA_Proj/RTX_3.20/bin/widgets/windows-64")
 
 # Create the directory at configure time (safe even if it exists)

@@ -7,6 +7,8 @@
 #include <QJsonDocument>
 #include <QDateTime> // Required for QDateTime
 #include <QDebug> // For debug prints
+#include <QMouseEvent> // Required for mouse events
+#include <QSvgRenderer>
 
 //--------------------------------------------------------------------------------
 
@@ -50,6 +52,7 @@ MyWidget::MyWidget(QWidget *parent)
   connect(m_webSocket, &QWebSocket::connected, this, &MyWidget::onConnected);
   connect(m_webSocket, &QWebSocket::disconnected, this, &MyWidget::onDisconnected);
   connect(m_webSocket, &QWebSocket::binaryMessageReceived, this, &MyWidget::onBinaryMessageReceived);
+  connect(m_webSocket, &QWebSocket::textMessageReceived, this, &MyWidget::onTextMessageReceived);
 
   connect(&m_connectionStatusTimer, &QTimer::timeout, this, &MyWidget::checkConnectionStatus);
   m_connectionStatusTimer.start(500); // Check connection status every 0.5 seconds
@@ -61,6 +64,21 @@ MyWidget::MyWidget(QWidget *parent)
   setPalette(pal);
 }
 
+MyWidget::~MyWidget()
+{
+    // Safely close WebSocket connection
+    if (m_webSocket) {
+        m_webSocket->close();
+    }
+    // Safely close UDP socket
+    closeUdpSocket();
+    // Stop connection status timer
+    m_connectionStatusTimer.stop();
+    // Stop reconnect timer if exists
+    if (m_reconnectTimer) {
+        m_reconnectTimer->stop();
+    }
+}
 //--------------------------------------------------------------------------------
 
 /**
@@ -74,6 +92,7 @@ void MyWidget::setWebSocketUrl(const QString &url)
         return; // Avoid unnecessary update
     if (m_debugPrint) qDebug() << "[DEBUG] setWebSocketUrl called with" << url;
     m_webSocketUrl = url;
+    if (m_inGedi) return; // Do not connect in editor
     if (!m_webSocketUrl.isEmpty() && m_webSocket->state() == QAbstractSocket::UnconnectedState)
     {        
         m_webSocket->open(QUrl(m_webSocketUrl));
@@ -146,6 +165,9 @@ void MyWidget::onConnected()
 {
     if (m_debugPrint) qDebug() << "[DEBUG] onConnected called. RTSP URL:" << m_rtspStreamUrl;
     m_statusText = statusMsg.connecting;
+    m_undistortionAvailable = false; // Reset on new connection
+    m_undistortionEnabled = false;
+    m_undistortionMode = 0;
     if (!m_rtspStreamUrl.isEmpty())
     {
         QJsonObject message;
@@ -169,18 +191,28 @@ void MyWidget::onConnected()
 void MyWidget::onDisconnected()
 {
     if (m_debugPrint) qDebug() << "[DEBUG] onDisconnected called.";
+    m_undistortionAvailable = false;
+    m_undistortionEnabled = false;
+    m_undistortionMode = 0;
     if (m_statusText != statusMsg.noConnection || !m_image.isNull()) {
         m_statusText = statusMsg.noConnection;
         m_image = QImage(); // Clear image
         update();
     }
     // Attempt to reconnect if URL is set
+    if (m_inGedi) return; // Do not reconnect in editor
     if (!m_webSocketUrl.isEmpty()) {
-        QTimer::singleShot(5000, this, [this](){
-            if (m_webSocket->state() == QAbstractSocket::UnconnectedState) {
-                 m_webSocket->open(QUrl(m_webSocketUrl));
-            }
-        });
+        // Use a member QTimer for safe delayed reconnect
+        if (!m_reconnectTimer) {
+            m_reconnectTimer = new QTimer(this);
+            m_reconnectTimer->setSingleShot(true);
+            connect(m_reconnectTimer, &QTimer::timeout, this, [this]() {
+                if (m_webSocket && m_webSocket->state() == QAbstractSocket::UnconnectedState) {
+                    m_webSocket->open(QUrl(m_webSocketUrl));
+                }
+            });
+        }
+        m_reconnectTimer->start(5000);
     }
 }
 
@@ -251,6 +283,7 @@ void MyWidget::onBinaryMessageReceived(const QByteArray &message)
 void MyWidget::checkConnectionStatus()
 {
     if (m_debugPrint) qDebug() << "[DEBUG] checkConnectionStatus called. WebSocket state:" << m_webSocket->state();
+    if (m_inGedi) return; // Do not connect in editor
     bool needUpdate = false;
     if (m_webSocket->state() != QAbstractSocket::ConnectedState) {
         if (m_statusText != statusMsg.noConnection || !m_image.isNull()) {
@@ -445,6 +478,87 @@ void MyWidget::paintEvent(QPaintEvent *)
       painter.setPen(Qt::white);
       painter.drawText(nameTextDrawRect, Qt::AlignLeft | Qt::AlignVCenter, nameText);
   }
+
+  // Draw undistortion button if available
+  if (m_undistortionAvailable) {
+      int boxPadding = 5;
+      int iconSize = 24; // Desired icon size
+
+      // Position in top-right, adjust if stream name is also there
+      int x = width() - iconSize - boxPadding;
+      int y = boxPadding;
+      if (!m_streamName.isEmpty() && m_streamNameBoxPosition == TopRight) {
+          QFontMetrics fm(painter.fontMetrics());
+          y += fm.height() + 2 * boxPadding; // Move below stream name box
+      }
+      
+      m_undistortButtonRect = QRect(x, y, iconSize, iconSize);
+
+      // Choose icon based on mode
+      QString iconPath;
+      switch (m_undistortionMode) {
+          case 0:
+              iconPath = ":/distorted.svg";
+              break;
+          case 1:
+              iconPath = ":/undistorted_alpha0.svg";
+              break;
+          case 2:
+              iconPath = ":/undistorted_alpha1.svg";
+              break;
+          default:
+              iconPath = ":/distorted.svg";
+              break;
+      }
+      
+      QSvgRenderer renderer(iconPath);
+      if (renderer.isValid()) {
+          renderer.render(&painter, m_undistortButtonRect);
+      } else {
+          // Fallback to text if icon fails to load
+          painter.setPen(Qt::red);
+          painter.drawText(m_undistortButtonRect, Qt::AlignCenter, "!");
+      }
+  }
+}
+
+void MyWidget::onTextMessageReceived(const QString &message)
+{
+    if (m_debugPrint) qDebug() << "[DEBUG] onTextMessageReceived called with:" << message;
+    QJsonDocument doc = QJsonDocument::fromJson(message.toUtf8());
+    if (!doc.isObject()) return;
+
+    QJsonObject obj = doc.object();
+    QString type = obj["type"].toString();
+
+    if (type == "undistortion_info") {
+        m_undistortionAvailable = obj["available"].toBool();
+        m_undistortionEnabled = obj["enabled"].toBool();
+        m_undistortionMode = obj["mode"].toInt(0); // Default to 0 if not present
+        if (m_debugPrint) qDebug() << "[DEBUG] Undistortion available:" << m_undistortionAvailable << "enabled:" << m_undistortionEnabled << "mode:" << m_undistortionMode;
+        update();
+    } else if (type == "undistortion_state") {
+        m_undistortionEnabled = obj["enabled"].toBool();
+        m_undistortionMode = obj["mode"].toInt(0); // Default to 0 if not present
+        if (m_debugPrint) qDebug() << "[DEBUG] Undistortion state updated to enabled:" << m_undistortionEnabled << "mode:" << m_undistortionMode;
+        update();
+    }
+}
+
+void MyWidget::mousePressEvent(QMouseEvent *event)
+{
+    if (m_undistortionAvailable && m_undistortButtonRect.contains(event->pos())) {
+        if (m_debugPrint) qDebug() << "[DEBUG] Undistort button clicked";
+        if (m_webSocket->state() == QAbstractSocket::ConnectedState) {
+            QJsonObject message;
+            message["type"] = "control";
+            message["command"] = "toggle_undistortion";
+            m_webSocket->sendTextMessage(QJsonDocument(message).toJson(QJsonDocument::Compact));
+        }
+        event->accept();
+    } else {
+        event->ignore();
+    }
 }
 
 // Implementation for setTransport, setUdpPort
@@ -510,8 +624,7 @@ void MyWidget::setStreamName(const QString &name, int position) {
     m_streamName = name;
     if (position >= 1 && position <= 4)
         m_streamNameBoxPosition = static_cast<BoxPosition>(position);
-    else
-        m_streamNameBoxPosition = TopLeft;
+    
     if (m_debugPrint) qDebug() << "[DEBUG] setStreamName called with" << name << ", position:" << m_streamNameBoxPosition;
     update();
 }
@@ -599,7 +712,7 @@ QStringList streamingEWO::methodList() const
   list.append("void setDebugPrint(bool enabled)"); // Add new method
   list.append("void setTransport(string transport)");
   list.append("void setUdpPort(int port)"); // Add UDP port method
-  list.append("void setStreamName(string name, int position=1)");
+  list.append("void setStreamName(string name, int position=-1)");
 
   return list;
 }
@@ -747,7 +860,7 @@ QVariant streamingEWO::invokeMethod(const QString &name, QList<QVariant> &values
   if ( name == "setStreamName" )
   {
     if (values.size() == 1)
-      baseWidget->setStreamName(values[0].toString(), 1);
+      baseWidget->setStreamName(values[0].toString());
     else if (values.size() >= 2)
       baseWidget->setStreamName(values[0].toString(), values[1].toInt());
     return QVariant();
@@ -755,13 +868,4 @@ QVariant streamingEWO::invokeMethod(const QString &name, QList<QVariant> &values
 
   return BaseExternWidget::invokeMethod(name, values, error);
 }
-
-
-
-
-
-
-
-
-
 

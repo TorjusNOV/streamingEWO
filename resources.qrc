@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/">
+        <file>undistorted_alpha0.svg</file>
+        <file>undistorted_alpha1.svg</file>
+        <file>distorted.svg</file>
+    </qresource>
+</RCC>
