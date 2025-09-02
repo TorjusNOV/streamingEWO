@@ -67,6 +67,7 @@ public:
   protected:
     virtual void paintEvent(QPaintEvent *event);
     virtual void mousePressEvent(QMouseEvent *event);
+    virtual bool event(QEvent *event); // Add generic event handler for touch events
 
   private slots:
     void onConnected();
@@ -79,6 +80,7 @@ public:
   private:
     void setupUdpSocket();
     void closeUdpSocket();
+    QString getLocalIpAddress();
 
     QWebSocket *m_webSocket;
     QImage m_image;
@@ -87,6 +89,7 @@ public:
     QString m_webSocketUrl;
     QString m_rtspStreamUrl;
     qint64 m_lastFrameTimestamp;
+    qint64 m_lastServerTimestamp;
     bool m_debugMode; // New member for debug state
     bool m_debugPrint;
     bool m_overLatencyCutoff = false; // New member to track latency cutoff
@@ -102,7 +105,7 @@ public:
     // Undistortion members
     bool m_undistortionAvailable = false;
     bool m_undistortionEnabled = false;
-    int m_undistortionMode = 0; // 0=off, 1=alpha=1.0, 2=alpha=0.0
+    int m_undistortionMode = 0; // 0=off, 1=alpha=0.0, 2=alpha=0.4
     QRect m_undistortButtonRect;
 };
 

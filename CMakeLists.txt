@@ -19,7 +19,7 @@ if ( WIN32 )
 endif()
 
 # Find required packages
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets WebSockets Svg)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets WebSockets Svg Network)
 
 # As this is a Qt project, we need to enable automoc, autouic and autorcc
 qt_standard_project_setup()
@@ -27,7 +27,7 @@ qt_add_resources(RESOURCES resources.qrc)
 qt_add_library(${TARGET} SHARED ${SOURCES} ${RESOURCES})
 
 # Link libraries
-target_link_libraries(${TARGET} PRIVATE Qt6::Gui Qt6::Widgets Qt6::WebSockets Qt6::Svg ewo)
+target_link_libraries(${TARGET} PRIVATE Qt6::Gui Qt6::Widgets Qt6::WebSockets Qt6::Svg Qt6::Network ewo)
 
 # Install rules
 set(DEST_DIR "C:/WinCC_OA_Proj/RTX_3.20/bin/widgets/windows-64")

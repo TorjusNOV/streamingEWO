@@ -9,6 +9,7 @@
 #include <QDebug> // For debug prints
 #include <QMouseEvent> // Required for mouse events
 #include <QSvgRenderer>
+#include <QNetworkInterface> // Required for getting local IP address
 
 //--------------------------------------------------------------------------------
 
@@ -48,7 +49,8 @@ MyWidget::MyWidget(QWidget *parent)
     m_streamName(),
     m_streamNameBoxPosition(TopLeft)
 {
-  if (m_debugPrint) qDebug() << "[DEBUG] MyWidget constructor called";
+  // Note: m_transport and m_udpPort are initialized in the header with default values
+  if (m_debugPrint) qDebug() << "[DEBUG] MyWidget constructor called. Initial UDP port:" << m_udpPort << "Transport:" << (m_transport == UDP ? "UDP" : "WebSocket");
   connect(m_webSocket, &QWebSocket::connected, this, &MyWidget::onConnected);
   connect(m_webSocket, &QWebSocket::disconnected, this, &MyWidget::onDisconnected);
   connect(m_webSocket, &QWebSocket::binaryMessageReceived, this, &MyWidget::onBinaryMessageReceived);
@@ -62,6 +64,11 @@ MyWidget::MyWidget(QWidget *parent)
   pal.setColor(backgroundRole(), Qt::green);
   setAutoFillBackground(true);
   setPalette(pal);
+  
+  // Enable touch events for touch interface support
+  setAttribute(Qt::WA_AcceptTouchEvents, true);
+  // Also enable synthetic mouse events from touch as fallback
+  setAttribute(Qt::WA_TouchPadAcceptSingleTouchEvents, true);
 }
 
 MyWidget::~MyWidget()
@@ -163,7 +170,7 @@ bool MyWidget::getDebugPrint() const
  */
 void MyWidget::onConnected()
 {
-    if (m_debugPrint) qDebug() << "[DEBUG] onConnected called. RTSP URL:" << m_rtspStreamUrl;
+    if (m_debugPrint) qDebug() << "[DEBUG] onConnected called. RTSP URL:" << m_rtspStreamUrl << "Transport:" << (m_transport == UDP ? "UDP" : "WebSocket") << "UDP Port:" << m_udpPort;
     m_statusText = statusMsg.connecting;
     m_undistortionAvailable = false; // Reset on new connection
     m_undistortionEnabled = false;
@@ -177,8 +184,19 @@ void MyWidget::onConnected()
         message["transport"] = (m_transport == UDP ? "udp" : "websocket");
         if (m_transport == UDP) {
             message["udp_port"] = m_udpPort;
+            
+            // Get the client's local IP address
+            QString localIp = getLocalIpAddress();
+            if (!localIp.isEmpty()) {
+                message["udp_ip"] = localIp;
+                if (m_debugPrint) qDebug() << "[DEBUG] Using local IP for UDP:" << localIp;
+            } else {
+                if (m_debugPrint) qDebug() << "[DEBUG] Warning: Could not determine local IP address";
+            }
+            
             setupUdpSocket();
         }
+        if (m_debugPrint) qDebug() << "[DEBUG] Sending control message:" << QJsonDocument(message).toJson(QJsonDocument::Compact);
         m_webSocket->sendTextMessage(QJsonDocument(message).toJson(QJsonDocument::Compact));
     }
     update();
@@ -232,14 +250,19 @@ void MyWidget::onBinaryMessageReceived(const QByteArray &message)
     if (message.size() > 8) {
         QByteArray timestampData = message.left(8);
         QByteArray imageData = message.mid(8);
+        
+        if (m_debugPrint) {
+            qDebug() << "[DEBUG] Timestamp bytes:" << timestampData.toHex();
+            qDebug() << "[DEBUG] Image data size:" << imageData.size() << "First few bytes:" << imageData.left(16).toHex();
+        }
 
-        qint64 timestamp;
+        
         QDataStream tsStream(timestampData);
-        tsStream >> timestamp;
+        tsStream >> m_lastServerTimestamp;
 
         qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
-        m_currentDelayMs = currentTime - timestamp; // Store current delay
-        if (m_debugPrint) qDebug() << "[DEBUG] onBinaryMessageReceived called. Current time, received time and delay:" << currentTime <<", " << timestamp << ", " << m_currentDelayMs;
+        m_currentDelayMs = currentTime - m_lastServerTimestamp; // Store current delay
+        if (m_debugPrint) qDebug() << "[DEBUG] onBinaryMessageReceived called. Current time, received time and delay:" << currentTime <<", " << m_lastServerTimestamp << ", " << m_currentDelayMs;
 
         bool overCutoff = m_currentDelayMs > 150;
         if (!m_debugMode && overCutoff) {
@@ -249,10 +272,12 @@ void MyWidget::onBinaryMessageReceived(const QByteArray &message)
             }
         } else {
             if (m_image.loadFromData(imageData, "JPEG")) {
+                if (m_debugPrint) qDebug() << "[DEBUG] Image loaded successfully from JPEG data";
                 if (!m_statusText.isEmpty())
                     m_statusText = QString(); // Clear status text if image is successfully loaded
                 m_lastFrameTimestamp = currentTime; // Store timestamp of the valid frame
             } else {
+                if (m_debugPrint) qDebug() << "[DEBUG] Failed to load image from JPEG data";
                 if (m_statusText != statusMsg.errorDecoding) {
                     m_statusText = statusMsg.errorDecoding;
                     m_image = QImage(); // Clear image on error
@@ -272,7 +297,8 @@ void MyWidget::onBinaryMessageReceived(const QByteArray &message)
     // Only update if something changed
     if (prevDelay != m_currentDelayMs || prevImage != m_image || prevStatus != m_statusText) {
         if (m_debugPrint) qDebug() << "[DEBUG] Frame update: delay=" << m_currentDelayMs << ", status=" << m_statusText;
-        update();
+        update(); // Trigger a repaint
+        repaint(); // Force immediate repaint - try this if update() isn't working
     }
 }
 
@@ -319,11 +345,12 @@ void MyWidget::checkConnectionStatus()
  */
 void MyWidget::paintEvent(QPaintEvent *)
 {
-  if (m_debugPrint) qDebug() << "[DEBUG] paintEvent called. Image null?" << m_image.isNull();
+  if (m_debugPrint) qDebug() << "[DEBUG] paintEvent called. Image null?" << m_image.isNull() << "Status text:" << m_statusText;
   QPainter painter(this);
   painter.setRenderHint(QPainter::Antialiasing);
 
   if (!m_image.isNull()) {
+        if (m_debugPrint) qDebug() << "[DEBUG] Drawing image, size:" << m_image.size();
         // Calculate scaled size while preserving aspect ratio
         QSize widgetSize = rect().size();
         QSize imageSize = m_image.size();
@@ -336,7 +363,9 @@ void MyWidget::paintEvent(QPaintEvent *)
         painter.fillRect(rect(), Qt::black);
         // Draw the scaled image
         painter.drawImage(targetRect, m_image.scaled(scaledSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        
   } else {
+        if (m_debugPrint) qDebug() << "[DEBUG] Drawing green background with status:" << m_statusText;
         // Explicitly draw green background
         painter.fillRect(rect(), Qt::darkGreen);
 
@@ -370,8 +399,8 @@ void MyWidget::paintEvent(QPaintEvent *)
   // Draw debug information if enabled
   if (m_debugMode) {
       // Show delay, server timestamp, current time, and RTSP URL
-      QString serverTimestampStr = (m_lastFrameTimestamp > 0)
-          ? QDateTime::fromMSecsSinceEpoch(m_lastFrameTimestamp).toString("yyyy-MM-dd HH:mm:ss.zzz")
+      QString serverTimestampStr = (m_lastServerTimestamp > 0)
+          ? QDateTime::fromMSecsSinceEpoch(m_lastServerTimestamp).toString("yyyy-MM-dd HH:mm:ss.zzz")
           : "N/A";
       QString currentTimeStr = (m_inGedi ? "N/A" : QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz"));
       // Extract server IP from m_webSocketUrl
@@ -482,7 +511,7 @@ void MyWidget::paintEvent(QPaintEvent *)
   // Draw undistortion button if available
   if (m_undistortionAvailable) {
       int boxPadding = 5;
-      int iconSize = 24; // Desired icon size
+      int iconSize = 32; // Larger icon size for better touch accessibility
 
       // Position in top-right, adjust if stream name is also there
       int x = width() - iconSize - boxPadding;
@@ -547,8 +576,9 @@ void MyWidget::onTextMessageReceived(const QString &message)
 
 void MyWidget::mousePressEvent(QMouseEvent *event)
 {
+    if (m_debugPrint) qDebug() << "[DEBUG] Mouse press at" << event->pos() << "button rect:" << m_undistortButtonRect;
     if (m_undistortionAvailable && m_undistortButtonRect.contains(event->pos())) {
-        if (m_debugPrint) qDebug() << "[DEBUG] Undistort button clicked";
+        if (m_debugPrint) qDebug() << "[DEBUG] Undistort button clicked via mouse";
         if (m_webSocket->state() == QAbstractSocket::ConnectedState) {
             QJsonObject message;
             message["type"] = "control";
@@ -559,6 +589,46 @@ void MyWidget::mousePressEvent(QMouseEvent *event)
     } else {
         event->ignore();
     }
+}
+
+bool MyWidget::event(QEvent *event)
+{
+    switch (event->type()) {
+    case QEvent::TouchBegin:
+    case QEvent::TouchUpdate:
+    case QEvent::TouchEnd: {
+        QTouchEvent *touchEvent = static_cast<QTouchEvent*>(event);
+        if (touchEvent->points().size() == 1) {
+            const QTouchEvent::TouchPoint &touchPoint = touchEvent->points().first();
+            QPointF posF = touchPoint.position();
+            QPoint pos = posF.toPoint();
+            
+            if (m_debugPrint) qDebug() << "[DEBUG] Touch event at" << pos << "button rect:" << m_undistortButtonRect;
+            
+            if (event->type() == QEvent::TouchEnd && 
+                m_undistortionAvailable && 
+                m_undistortButtonRect.contains(pos)) {
+                
+                if (m_debugPrint) qDebug() << "[DEBUG] Undistort button touched";
+                if (m_webSocket->state() == QAbstractSocket::ConnectedState) {
+                    QJsonObject message;
+                    message["type"] = "control";
+                    message["command"] = "toggle_undistortion";
+                    m_webSocket->sendTextMessage(QJsonDocument(message).toJson(QJsonDocument::Compact));
+                }
+                event->accept();
+                return true;
+            }
+        }
+        // Accept all touch events to prevent them from being converted to mouse events
+        event->accept();
+        return true;
+    }
+    default:
+        break;
+    }
+    
+    return QWidget::event(event);
 }
 
 // Implementation for setTransport, setUdpPort
@@ -578,22 +648,39 @@ void MyWidget::setUdpPort(int port) {
         return;
     m_udpPort = port;
     if (m_debugPrint) qDebug() << "[DEBUG] setUdpPort called with" << port;
+    // Recreate UDP socket if transport is already set to UDP
+    if (m_transport == UDP) {
+        setupUdpSocket();
+    }
 }
 
 void MyWidget::setupUdpSocket()
 {
     closeUdpSocket();
-    if (m_udpPort <= 0)
+    if (m_udpPort <= 0) {
+        if (m_debugPrint) qDebug() << "[DEBUG] setupUdpSocket: Invalid port" << m_udpPort;
         return;
+    }
+    
+    if (m_debugPrint) qDebug() << "[DEBUG] setupUdpSocket: Attempting to bind on port" << m_udpPort;
+    
     m_udpSocket = new QUdpSocket(this);
+    
+    // Try to bind to the specified port
     if (!m_udpSocket->bind(QHostAddress::Any, m_udpPort)) {
-        if (m_debugPrint) qDebug() << "[DEBUG] Failed to bind UDP socket on port" << m_udpPort;
+        if (m_debugPrint) qDebug() << "[DEBUG] Failed to bind UDP socket on port" << m_udpPort << "Error:" << m_udpSocket->errorString();
         delete m_udpSocket;
         m_udpSocket = nullptr;
         return;
     }
+    
     connect(m_udpSocket, &QUdpSocket::readyRead, this, &MyWidget::onUdpDatagramReceived);
-    if (m_debugPrint) qDebug() << "[DEBUG] UDP socket bound on port" << m_udpPort;
+    connect(m_udpSocket, QOverload<QAbstractSocket::SocketError>::of(&QUdpSocket::errorOccurred),
+            this, [this](QAbstractSocket::SocketError error) {
+                if (m_debugPrint) qDebug() << "[DEBUG] UDP socket error:" << error << m_udpSocket->errorString();
+            });
+    
+    if (m_debugPrint) qDebug() << "[DEBUG] UDP socket successfully bound on port" << m_udpPort << "Local address:" << m_udpSocket->localAddress().toString();
 }
 
 void MyWidget::closeUdpSocket()
@@ -606,17 +693,88 @@ void MyWidget::closeUdpSocket()
     }
 }
 
+QString MyWidget::getLocalIpAddress()
+{
+    // Get all network interfaces
+    QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
+    
+    for (const QNetworkInterface &interface : interfaces) {
+        // Skip loopback and inactive interfaces
+        if (interface.flags() & QNetworkInterface::IsLoopBack)
+            continue;
+        if (!(interface.flags() & QNetworkInterface::IsUp))
+            continue;
+        if (!(interface.flags() & QNetworkInterface::IsRunning))
+            continue;
+            
+        // Get all addresses for this interface
+        QList<QNetworkAddressEntry> entries = interface.addressEntries();
+        for (const QNetworkAddressEntry &entry : entries) {
+            QHostAddress addr = entry.ip();
+            // Look for IPv4 addresses that are not loopback
+            if (addr.protocol() == QAbstractSocket::IPv4Protocol && 
+                !addr.isLoopback() && 
+                !addr.isMulticast()) {
+                
+                QString ipStr = addr.toString();
+                if (m_debugPrint) qDebug() << "[DEBUG] Found local IP:" << ipStr << "on interface:" << interface.humanReadableName();
+                
+                // Prefer private network ranges (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+                if (ipStr.startsWith("192.168.") || 
+                    ipStr.startsWith("10.") ||
+                    (ipStr.startsWith("172.") && ipStr.split('.')[1].toInt() >= 16 && ipStr.split('.')[1].toInt() <= 31)) {
+                    return ipStr;
+                }
+            }
+        }
+    }
+    
+    // If no private IP found, try to get any valid IPv4 address
+    for (const QNetworkInterface &interface : interfaces) {
+        if (interface.flags() & QNetworkInterface::IsLoopBack)
+            continue;
+        if (!(interface.flags() & QNetworkInterface::IsUp))
+            continue;
+            
+        QList<QNetworkAddressEntry> entries = interface.addressEntries();
+        for (const QNetworkAddressEntry &entry : entries) {
+            QHostAddress addr = entry.ip();
+            if (addr.protocol() == QAbstractSocket::IPv4Protocol && 
+                !addr.isLoopback()) {
+                return addr.toString();
+            }
+        }
+    }
+    
+    if (m_debugPrint) qDebug() << "[DEBUG] No suitable local IP address found";
+    return QString(); // Return empty string if no suitable address found
+}
+
 void MyWidget::onUdpDatagramReceived()
 {
-    while (m_udpSocket && m_udpSocket->hasPendingDatagrams()) {
+    if (m_debugPrint) qDebug() << "[DEBUG] onUdpDatagramReceived called";
+    
+    if (!m_udpSocket) {
+        if (m_debugPrint) qDebug() << "[DEBUG] onUdpDatagramReceived: m_udpSocket is null";
+        return;
+    }
+    
+    while (m_udpSocket->hasPendingDatagrams()) {
         QByteArray datagram;
         datagram.resize(int(m_udpSocket->pendingDatagramSize()));
         QHostAddress sender;
         quint16 senderPort;
-        m_udpSocket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
-        if (m_debugPrint) qDebug() << "[DEBUG] UDP datagram received, size:" << datagram.size();
-        // Reuse the same logic as WebSocket binary message
-        onBinaryMessageReceived(datagram);
+        
+        qint64 bytesRead = m_udpSocket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+        
+        if (bytesRead > 0) {
+            if (m_debugPrint) qDebug() << "[DEBUG] UDP datagram received from" << sender.toString() << ":" << senderPort << "size:" << bytesRead;
+            datagram.resize(int(bytesRead)); // Resize to actual data size
+            // Reuse the same logic as WebSocket binary message
+            onBinaryMessageReceived(datagram);
+        } else {
+            if (m_debugPrint) qDebug() << "[DEBUG] Failed to read UDP datagram, error:" << m_udpSocket->errorString();
+        }
     }
 }
 
@@ -868,4 +1026,3 @@ QVariant streamingEWO::invokeMethod(const QString &name, QList<QVariant> &values
 
   return BaseExternWidget::invokeMethod(name, values, error);
 }
-
