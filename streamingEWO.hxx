@@ -36,6 +36,7 @@ public:
   Q_PROPERTY(bool debugPrint READ getDebugPrint WRITE setDebugPrint DESIGNABLE true SCRIPTABLE true)
   Q_PROPERTY(TransportProtocol transport READ getTransport WRITE setTransport DESIGNABLE true SCRIPTABLE true)
   Q_PROPERTY(int udpPort READ getUdpPort WRITE setUdpPort DESIGNABLE true SCRIPTABLE true)
+  Q_PROPERTY(int frameDropRatio READ getFrameDropRatio WRITE setFrameDropRatio DESIGNABLE true SCRIPTABLE true)
   Q_PROPERTY(QString streamName READ getStreamName WRITE setStreamName DESIGNABLE true SCRIPTABLE true)
   Q_PROPERTY(BoxPosition streamNameBoxPosition READ getStreamNameBoxPosition WRITE setStreamNameBoxPosition DESIGNABLE true SCRIPTABLE true)
   Q_PROPERTY(bool inGedi READ isInGedi WRITE setInGedi DESIGNABLE false SCRIPTABLE false)
@@ -57,6 +58,8 @@ public:
     TransportProtocol getTransport() const;
     void setUdpPort(int port);
     int getUdpPort() const;
+    void setFrameDropRatio(int ratio);
+    int getFrameDropRatio() const;
     void setStreamName(const QString &name, int position = -1);
     QString getStreamName() const;
     BoxPosition getStreamNameBoxPosition() const;
@@ -96,6 +99,7 @@ public:
     qint64 m_currentDelayMs; // New member to store current delay
     TransportProtocol m_transport = WebSocket;
     int m_udpPort = 4635;
+    int m_frameDropRatio = 1; // Default to no frame dropping (1 = keep all frames)
     QUdpSocket* m_udpSocket = nullptr;
     QTimer* m_reconnectTimer = nullptr;
     // Stream name overlay members

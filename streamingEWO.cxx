@@ -125,6 +125,9 @@ void MyWidget::setRtspStreamUrl(const QString &url)
         message["command"] = "set_stream";
         message["url"] = m_rtspStreamUrl;
         message["transport"] = (m_transport == UDP ? "udp" : "websocket");
+        if (m_frameDropRatio > 1) {
+            message["frame_drop_ratio"] = m_frameDropRatio;
+        }
         if (m_transport == UDP) {
             message["udp_port"] = m_udpPort;
         }
@@ -182,6 +185,9 @@ void MyWidget::onConnected()
         message["command"] = "set_stream";
         message["url"] = m_rtspStreamUrl;
         message["transport"] = (m_transport == UDP ? "udp" : "websocket");
+        if (m_frameDropRatio > 1) {
+            message["frame_drop_ratio"] = m_frameDropRatio;
+        }
         if (m_transport == UDP) {
             message["udp_port"] = m_udpPort;
             
@@ -654,6 +660,13 @@ void MyWidget::setUdpPort(int port) {
     }
 }
 
+void MyWidget::setFrameDropRatio(int ratio) {
+    if (m_frameDropRatio == ratio)
+        return;
+    m_frameDropRatio = qMax(1, ratio); // Ensure minimum value of 1
+    if (m_debugPrint) qDebug() << "[DEBUG] setFrameDropRatio called with" << m_frameDropRatio;
+}
+
 void MyWidget::setupUdpSocket()
 {
     closeUdpSocket();
@@ -805,6 +818,7 @@ QString MyWidget::getWebSocketUrl() const { return m_webSocketUrl; }
 QString MyWidget::getRtspStreamUrl() const { return m_rtspStreamUrl; }
 MyWidget::TransportProtocol MyWidget::getTransport() const { return m_transport; }
 int MyWidget::getUdpPort() const { return m_udpPort; }
+int MyWidget::getFrameDropRatio() const { return m_frameDropRatio; }
 bool MyWidget::isInGedi() const { return m_inGedi; }
 
 //--------------------------------------------------------------------------------
@@ -870,6 +884,7 @@ QStringList streamingEWO::methodList() const
   list.append("void setDebugPrint(bool enabled)"); // Add new method
   list.append("void setTransport(string transport)");
   list.append("void setUdpPort(int port)"); // Add UDP port method
+  list.append("void setFrameDropRatio(int ratio)"); // Add frame drop ratio method
   list.append("void setStreamName(string name, int position=-1)");
 
   return list;
@@ -927,6 +942,12 @@ bool streamingEWO::methodInterface(const QString &name, QVariant::Type &retVal,
     return true;
   }
   if ( name == "setUdpPort" )
+  {
+    retVal = QVariant::Invalid;
+    args.append(QVariant::Int);
+    return true;
+  }
+  if ( name == "setFrameDropRatio" )
   {
     retVal = QVariant::Invalid;
     args.append(QVariant::Int);
@@ -1012,6 +1033,13 @@ QVariant streamingEWO::invokeMethod(const QString &name, QList<QVariant> &values
   {
     if ( !hasNumArgs(name, values, 1, error) ) return QVariant();
     baseWidget->setUdpPort(values[0].toInt());
+    return QVariant();
+  }
+
+  if ( name == "setFrameDropRatio" )
+  {
+    if ( !hasNumArgs(name, values, 1, error) ) return QVariant();
+    baseWidget->setFrameDropRatio(values[0].toInt());
     return QVariant();
   }
 

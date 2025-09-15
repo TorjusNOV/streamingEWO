@@ -30,7 +30,7 @@ qt_add_library(${TARGET} SHARED ${SOURCES} ${RESOURCES})
 target_link_libraries(${TARGET} PRIVATE Qt6::Gui Qt6::Widgets Qt6::WebSockets Qt6::Svg Qt6::Network ewo)
 
 # Install rules
-set(DEST_DIR "C:/WinCC_OA_Proj/RTX_3.20/bin/widgets/windows-64")
+set(DEST_DIR "C:/WinCC_OA_Proj/Cinclus/bin/widgets/windows-64")
 
 # Create the directory at configure time (safe even if it exists)
 file(MAKE_DIRECTORY "${DEST_DIR}")
